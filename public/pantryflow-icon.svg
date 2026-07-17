@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="PantryFlow">
+  <rect width="512" height="512" rx="112" fill="#1f5c4a"/>
+  <path fill="#f7f5ef" d="M130 214h252v32c0 89-50 145-126 145s-126-56-126-145v-32Z"/>
+  <path fill="none" stroke="#f7f5ef" stroke-linecap="round" stroke-width="32" d="M183 170c0-24 17-36 17-58M256 170c0-24 17-36 17-58M329 170c0-24 17-36 17-58"/>
+  <path fill="#d88b18" d="M218 391h76v33c0 11-9 20-20 20h-36c-11 0-20-9-20-20v-33Z"/>
+</svg>
