@@ -29,7 +29,7 @@ npm ci
 npm run dev
 ```
 
-依終端機顯示的網址開啟應用程式，通常是 `http://localhost:5173/PantryFlow/`。
+依終端機顯示的網址開啟應用程式，通常是 `http://localhost:5173/`。
 
 ## 常用指令
 
@@ -74,7 +74,7 @@ npm run build
 
 ## PWA 與部署
 
-正式網站：[https://th0225.github.io/PantryFlow/](https://th0225.github.io/PantryFlow/)
+正式網站：[https://pantry.dev-chi.com/](https://pantry.dev-chi.com/)
 
 推送至 `master` 後，GitHub Actions 會執行型別檢查、測試與正式建置，再將 `dist/` 自動部署至 GitHub Pages。除 `localhost` 外，PWA 安裝與 Service Worker 需要 HTTPS。
 
