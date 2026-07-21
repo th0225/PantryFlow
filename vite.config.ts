@@ -2,7 +2,10 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
 
+const base = '/PantryFlow/'
+
 export default defineConfig({
+  base,
   plugins: [
     react(),
     VitePWA({
@@ -17,7 +20,7 @@ export default defineConfig({
         lang: 'zh-Hant',
         icons: [
           {
-            src: '/pantryflow-icon.svg',
+            src: 'pantryflow-icon.svg',
             sizes: 'any',
             type: 'image/svg+xml',
             purpose: 'any maskable',

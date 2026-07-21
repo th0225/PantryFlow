@@ -206,6 +206,18 @@ function AppShell() {
 
   return (
     <div className="min-h-dvh overflow-x-hidden bg-canvas text-ink transition-colors duration-200 dark:bg-[#101713]">
+      <a
+        className="skip-link"
+        href="#main-content"
+        onClick={(event) => {
+          event.preventDefault()
+          const main = document.getElementById('main-content')
+          main?.focus({ preventScroll: true })
+          main?.scrollIntoView({ block: 'start' })
+        }}
+      >
+        跳到主要內容
+      </a>
       <aside className="fixed inset-y-0 left-0 z-30 hidden w-[248px] flex-col border-r border-oat-200 bg-[#fbfaf6] p-5 dark:border-[#2a3932] dark:bg-[#121b17] lg:flex">
         <Logo />
         <nav className="mt-10 space-y-1.5" aria-label="主要導覽">
