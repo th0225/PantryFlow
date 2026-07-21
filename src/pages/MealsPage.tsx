@@ -248,18 +248,28 @@ export default function MealsPage() {
     }
   }, [form.occurredAt])
 
-  const availableByIngredient = useMemo(() => {
-    if (!snapshot || !mealOccurredAtIso) return new Map<string, number>()
+  const availabilityResult = useMemo<{
+    values: Map<string, number>
+    failed: boolean
+  }>(() => {
+    if (!snapshot || !mealOccurredAtIso) {
+      return { values: new Map<string, number>(), failed: false }
+    }
     try {
-      return calculateMealAvailability(snapshot, {
-        id: editingMeal?.id ?? '\uffff',
-        occurredAt: mealOccurredAtIso,
-        createdAt: editingMeal?.createdAt ?? new Date().toISOString(),
-      })
+      return {
+        values: calculateMealAvailability(snapshot, {
+          id: editingMeal?.id ?? '\uffff',
+          occurredAt: mealOccurredAtIso,
+          createdAt: editingMeal?.createdAt ?? new Date().toISOString(),
+        }),
+        failed: false,
+      }
     } catch {
-      return new Map<string, number>()
+      return { values: new Map<string, number>(), failed: true }
     }
   }, [editingMeal, mealOccurredAtIso, snapshot])
+
+  const availableByIngredient = availabilityResult.values
 
   const itemAvailability = useMemo(() => {
     const counts = new Map<string, number>()
@@ -463,6 +473,7 @@ export default function MealsPage() {
 
     if (!mealTypeLabels[form.mealType]) nextErrors.mealType = '請選擇餐別'
     if (form.items.length === 0) nextErrors.items = '一餐至少需要一項食材'
+    if (availabilityResult.failed) nextErrors.items = '目前無法計算可用庫存，請重新載入後再試'
 
     const ingredientCounts = new Map<string, number>()
     for (const item of form.items) {
@@ -496,7 +507,7 @@ export default function MealsPage() {
         errors.unit = '此單位與食材的計量維度不相容'
       }
 
-      if (occurredAt && ingredient && !errors.quantity && !errors.unit) {
+      if (occurredAt && ingredient && !errors.quantity && !errors.unit && !availabilityResult.failed) {
         try {
           const quantityBase = convertToBase(quantity, item.unit, ingredient.dimension)
           const availableBase = availableByIngredient.get(ingredient.id) ?? 0
@@ -700,7 +711,7 @@ export default function MealsPage() {
               type="submit"
               form={MEAL_FORM_ID}
               className="primary-button"
-              disabled={formBusy || form.items.length === 0 || hasImmediateShortage}
+              disabled={formBusy || form.items.length === 0 || hasImmediateShortage || availabilityResult.failed}
               aria-busy={submitting || undefined}
             >
               {submitting ? '儲存中…' : editingMeal ? '儲存變更' : '儲存餐點'}
@@ -716,6 +727,16 @@ export default function MealsPage() {
           aria-busy={formBusy}
         >
           {submitError && <InlineAlert>{submitError}</InlineAlert>}
+          {availabilityResult.failed && (
+            <InlineAlert>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>目前無法計算可用庫存，請重新載入後再試。</span>
+                <button type="button" className="text-button" onClick={() => void refresh()}>
+                  重新載入
+                </button>
+              </div>
+            </InlineAlert>
+          )}
 
           <div className="grid gap-5 sm:grid-cols-2">
             <Field label="日期與時間" htmlFor="meal-occurred-at" required error={formErrors.occurredAt}>
@@ -878,7 +899,9 @@ export default function MealsPage() {
                     <p id={availabilityId} className="mt-3 text-xs leading-5 text-stone-500" aria-live="polite">
                       可用庫存：{ingredient
                         ? mealOccurredAtIso
-                          ? formatBaseQuantity(status.availableBase, ingredient.dimension)
+                          ? availabilityResult.failed
+                            ? '目前無法計算'
+                            : formatBaseQuantity(status.availableBase, ingredient.dimension)
                           : '請先選擇有效日期與時間'
                         : '請先選擇食材'}
                       {status.requestedBase !== null && ingredient && status.shortageBase <= QUANTITY_EPSILON

@@ -1,6 +1,6 @@
 import 'fake-indexeddb/auto'
 import { afterAll, beforeEach, describe, expect, it } from 'vitest'
-import { InventoryShortageError } from '../domain/core'
+import { calculateMealAvailability, InventoryShortageError } from '../domain/core'
 import { db, DEFAULT_CATEGORY_IDS } from './db'
 import {
   clearAllData,
@@ -126,6 +126,35 @@ describe('IndexedDB repository integration', () => {
     expect(snapshot.purchaseItems.filter((item) => item.purchaseId === purchase.id)).toEqual([
       expect.objectContaining({ id: riceItem.id, subtotalCents: 15_000, allocatedCostCents: 15_000 }),
     ])
+  })
+
+  it('uses a date-only purchase for an earlier meal on the same Taipei day', async () => {
+    const ingredient = await createMassIngredient('同日早餐食材')
+    const purchase = await savePurchase({
+      store: '同日採買商店',
+      occurredAt: '2026-07-21T04:00:00.000Z',
+      items: [
+        { ingredientId: ingredient.id, enteredQuantity: 100, enteredUnit: 'g', subtotalCents: 1_000 },
+      ],
+    })
+
+    let snapshot = await loadSnapshot()
+    const breakfastCandidate = {
+      id: 'candidate-breakfast',
+      occurredAt: '2026-07-21T01:00:00.000Z',
+      createdAt: '2026-07-21T05:00:00.000Z',
+    }
+    expect(calculateMealAvailability(snapshot, breakfastCandidate).get(ingredient.id)).toBe(100)
+
+    const breakfast = await saveMeal({
+      occurredAt: breakfastCandidate.occurredAt,
+      mealType: 'breakfast',
+      items: [{ ingredientId: ingredient.id, enteredQuantity: 25, enteredUnit: 'g' }],
+    })
+
+    snapshot = await loadSnapshot()
+    expect(snapshot.meals.find((item) => item.id === breakfast.id)?.totalCostCents).toBe(250)
+    expect(snapshot.batches.find((batch) => batch.purchaseId === purchase.id)?.remainingQuantityBase).toBe(75)
   })
 
   it('rejects an overflowing subtotal total without partial purchase writes', async () => {

@@ -28,6 +28,9 @@ const UNIT_MULTIPLIER: Record<InputUnit, number> = {
   pack: 1,
 }
 
+const MILLISECONDS_PER_DAY = 86_400_000
+const TAIPEI_UTC_OFFSET_MS = 8 * 60 * 60 * 1_000
+
 export class DomainValidationError extends Error {
   constructor(message: string) {
     super(message)
@@ -211,7 +214,10 @@ export function recalculateInventory(snapshot: InventorySnapshot): InventoryCalc
     )
     assertNonNegativeSafeInteger(item.subtotalCents, `subtotalCents for purchase item ${item.id}`)
 
-    const occurredAtMs = parseTimestamp(purchase.occurredAt, `purchase ${purchase.id} occurredAt`)
+    const occurredAtMs = parsePurchaseDayStart(
+      purchase.occurredAt,
+      `purchase ${purchase.id} occurredAt`,
+    )
     const createdAtMs = parseTimestamp(item.createdAt, `purchase item ${item.id} createdAt`)
 
     return {
@@ -441,7 +447,7 @@ function calculateInventoryAvailability(
 
   for (const batch of calculated.batches) {
     if (
-      parseTimestamp(batch.occurredAt, `purchase batch ${batch.id} occurredAt`) >
+      parsePurchaseDayStart(batch.occurredAt, `purchase batch ${batch.id} occurredAt`) >
         candidateKey.occurredAtMs ||
       isEffectivelyZero(batch.remainingQuantityBase)
     ) {
@@ -530,6 +536,21 @@ function parseTimestamp(value: string, label: string): number {
     throw new DomainValidationError(`${label} must be a valid ISO 8601 date-time`)
   }
   return timestamp
+}
+
+/**
+ * Purchases only collect a calendar date. Existing records are serialized at
+ * noon in Taipei, so inventory chronology must normalize them to the start of
+ * that Taipei calendar day rather than treating noon as an actual purchase
+ * time.
+ */
+function parsePurchaseDayStart(value: string, label: string): number {
+  const timestamp = parseTimestamp(value, label)
+  return (
+    Math.floor((timestamp + TAIPEI_UTC_OFFSET_MS) / MILLISECONDS_PER_DAY) *
+      MILLISECONDS_PER_DAY -
+    TAIPEI_UTC_OFFSET_MS
+  )
 }
 
 function compareStableId(left: EntityId, right: EntityId): number {

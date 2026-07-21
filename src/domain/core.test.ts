@@ -271,6 +271,39 @@ describe('purchase cost allocation', () => {
 })
 
 describe('FIFO inventory recalculation', () => {
+  it('makes a date-only purchase available from the start of its Taipei calendar day', () => {
+    const sameDayPurchase = purchase('purchase-same-day', '2026-07-21T04:00:00.000Z')
+    const breakfast = meal('meal-breakfast', '2026-07-21T01:00:00.000Z')
+    const source = snapshot({
+      purchases: [sameDayPurchase],
+      purchaseItems: [purchaseItem({
+        id: 'batch-same-day',
+        purchaseId: sameDayPurchase.id,
+        quantityBase: 100,
+        costCents: 1_000,
+        createdAt: '2026-07-21T04:00:00.000Z',
+      })],
+      meals: [breakfast],
+      mealIngredients: [mealIngredient({
+        id: 'usage-breakfast',
+        mealId: breakfast.id,
+        quantityBase: 25,
+      })],
+    })
+
+    expect(calculateMealAvailability(source, breakfast).get('ingredient-1')).toBe(100)
+
+    const calculated = recalculateInventory(source)
+    expect(calculated.batches[0].remainingQuantityBase).toBe(75)
+    expect(calculated.mealCosts[breakfast.id]).toBe(250)
+
+    expect(calculateMealAvailability(source, {
+      id: 'meal-previous-day',
+      occurredAt: '2026-07-20T15:59:00.000Z',
+      createdAt: '2026-07-21T05:00:00.000Z',
+    }).get('ingredient-1')).toBeUndefined()
+  })
+
   it('calculates meal availability at the candidate historical time', () => {
     const firstPurchase = purchase('purchase-first', DAY_1)
     const futurePurchase = purchase('purchase-future', DAY_4)
