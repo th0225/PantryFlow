@@ -39,13 +39,11 @@ async function createCrossBatchFixture() {
   const firstPurchase = await savePurchase({
     store: '市場 A',
     occurredAt: at(1),
-    paidTotalCents: 1_000,
     items: [{ ingredientId: ingredient.id, enteredQuantity: 100, enteredUnit: 'g', subtotalCents: 1_000 }],
   })
   const secondPurchase = await savePurchase({
     store: '市場 B',
     occurredAt: at(2),
-    paidTotalCents: 3_000,
     items: [{ ingredientId: ingredient.id, enteredQuantity: 100, enteredUnit: 'g', subtotalCents: 3_000 }],
   })
   const meal = await saveMeal({
@@ -74,8 +72,7 @@ describe('IndexedDB repository integration', () => {
     const purchase = await savePurchase({
       store: '合作社',
       occurredAt: at(1),
-      paidTotalCents: 999,
-      note: '折扣採買',
+      note: '每週採買',
       items: [
         { ingredientId: rice.id, enteredQuantity: 1, enteredUnit: 'kg', subtotalCents: 700 },
         { ingredientId: milk.id, enteredQuantity: 1, enteredUnit: 'L', subtotalCents: 300 },
@@ -87,17 +84,71 @@ describe('IndexedDB repository integration', () => {
     const linked = snapshot.transactions.find((transaction) => transaction.purchaseId === purchase.id)
 
     expect(items).toHaveLength(2)
-    expect(items.reduce((sum, item) => sum + item.allocatedCostCents, 0)).toBe(999)
+    expect(purchase.paidTotalCents).toBe(1_000)
+    expect(items.every((item) => item.allocatedCostCents === item.subtotalCents)).toBe(true)
+    expect(items.reduce((sum, item) => sum + item.allocatedCostCents, 0)).toBe(1_000)
     expect(items.map((item) => item.quantityBase)).toEqual([1_000, 1_000])
-    expect(linked).toMatchObject({ type: 'expense', amountCents: 999, categoryId: DEFAULT_CATEGORY_IDS.groceries })
+    expect(linked).toMatchObject({ type: 'expense', amountCents: 1_000, categoryId: DEFAULT_CATEGORY_IDS.groceries })
     expect(snapshot.batches.filter((batch) => batch.purchaseId === purchase.id)).toHaveLength(2)
+  })
+
+  it('derives create and update totals from the current item subtotals', async () => {
+    const rice = await createMassIngredient('糙米')
+    const milk = await saveIngredient({ name: '豆漿', dimension: 'volume', baseUnit: 'ml' })
+    const purchase = await savePurchase({
+      store: '自動加總商店',
+      occurredAt: at(1),
+      items: [
+        { ingredientId: rice.id, enteredQuantity: 1, enteredUnit: 'kg', subtotalCents: 12_300 },
+        { ingredientId: milk.id, enteredQuantity: 1, enteredUnit: 'L', subtotalCents: 4_500 },
+      ],
+    })
+
+    let snapshot = await loadSnapshot()
+    expect(purchase.paidTotalCents).toBe(16_800)
+    expect(snapshot.transactions.find((item) => item.purchaseId === purchase.id)?.amountCents).toBe(16_800)
+
+    const riceItem = snapshot.purchaseItems.find((item) => (
+      item.purchaseId === purchase.id && item.ingredientId === rice.id
+    ))!
+    const updated = await savePurchase({
+      id: purchase.id,
+      store: '自動加總商店',
+      occurredAt: at(1),
+      items: [
+        { id: riceItem.id, ingredientId: rice.id, enteredQuantity: 1, enteredUnit: 'kg', subtotalCents: 15_000 },
+      ],
+    })
+
+    snapshot = await loadSnapshot()
+    expect(updated.paidTotalCents).toBe(15_000)
+    expect(snapshot.transactions.find((item) => item.purchaseId === purchase.id)?.amountCents).toBe(15_000)
+    expect(snapshot.purchaseItems.filter((item) => item.purchaseId === purchase.id)).toEqual([
+      expect.objectContaining({ id: riceItem.id, subtotalCents: 15_000, allocatedCostCents: 15_000 }),
+    ])
+  })
+
+  it('rejects an overflowing subtotal total without partial purchase writes', async () => {
+    const ingredient = await createMassIngredient('溢位測試食材')
+    await expect(savePurchase({
+      store: '溢位商店',
+      occurredAt: at(1),
+      items: [
+        { ingredientId: ingredient.id, enteredQuantity: 1, enteredUnit: 'g', subtotalCents: Number.MAX_SAFE_INTEGER },
+        { ingredientId: ingredient.id, enteredQuantity: 1, enteredUnit: 'g', subtotalCents: 1 },
+      ],
+    })).rejects.toThrow(/subtotal total/i)
+
+    const snapshot = await loadSnapshot()
+    expect(snapshot.purchases).toHaveLength(0)
+    expect(snapshot.purchaseItems).toHaveLength(0)
+    expect(snapshot.transactions).toHaveLength(0)
   })
 
   it('creates named purchase ingredients with unit-derived dimensions and reuses a repeated name', async () => {
     const purchase = await savePurchase({
       store: '直接輸入商店',
       occurredAt: at(1),
-      paidTotalCents: 400,
       items: [
         { ingredientName: '白米', enteredQuantity: 1, enteredUnit: 'kg', subtotalCents: 100 },
         { ingredientName: ' 白米 ', enteredQuantity: 100, enteredUnit: 'g', subtotalCents: 100 },
@@ -126,7 +177,6 @@ describe('IndexedDB repository integration', () => {
     const purchase = await savePurchase({
       store: '名稱比對商店',
       occurredAt: at(1),
-      paidTotalCents: 100,
       items: [{ ingredientName: ' ｍｉｌｋ ', enteredQuantity: 1, enteredUnit: 'L', subtotalCents: 100 }],
     })
 
@@ -139,7 +189,6 @@ describe('IndexedDB repository integration', () => {
     await expect(savePurchase({
       store: '不相容商店',
       occurredAt: at(1),
-      paidTotalCents: 200,
       items: [
         { ingredientName: '測試食材', enteredQuantity: 100, enteredUnit: 'g', subtotalCents: 100 },
         { ingredientName: '測試食材', enteredQuantity: 100, enteredUnit: 'ml', subtotalCents: 100 },
@@ -162,7 +211,6 @@ describe('IndexedDB repository integration', () => {
     const purchase = await savePurchase({
       store: '歷史商店',
       occurredAt: at(1),
-      paidTotalCents: 100,
       items: [{ ingredientId: used.id, enteredQuantity: 10, enteredUnit: 'g', subtotalCents: 100 }],
     })
 
@@ -222,15 +270,14 @@ describe('IndexedDB repository integration', () => {
     await deleteIngredient(mealIngredient.id)
   })
 
-  it('preserves client-generated purchase item IDs for stable cent allocation and rejects collisions', async () => {
+  it('preserves client-generated purchase item IDs and rejects collisions', async () => {
     const ingredient = await createMassIngredient()
     const lowId = '00000000-0000-4000-8000-000000000001'
     const highId = '00000000-0000-4000-8000-000000000002'
     const addedId = '00000000-0000-4000-8000-000000000003'
     const purchase = await savePurchase({
-      store: '穩定分攤商店',
+      store: '固定品項商店',
       occurredAt: at(1),
-      paidTotalCents: 1,
       items: [
         { id: highId, ingredientId: ingredient.id, enteredQuantity: 1, enteredUnit: 'g', subtotalCents: 1 },
         { id: lowId, ingredientId: ingredient.id, enteredQuantity: 1, enteredUnit: 'g', subtotalCents: 1 },
@@ -239,14 +286,14 @@ describe('IndexedDB repository integration', () => {
 
     let stored = (await loadSnapshot()).purchaseItems.filter((item) => item.purchaseId === purchase.id)
     expect(new Map(stored.map((item) => [item.id, item.allocatedCostCents]))).toEqual(
-      new Map([[highId, 0], [lowId, 1]]),
+      new Map([[highId, 1], [lowId, 1]]),
     )
+    expect(purchase.paidTotalCents).toBe(2)
 
     await savePurchase({
       id: purchase.id,
-      store: '穩定分攤商店',
+      store: '固定品項商店',
       occurredAt: at(1),
-      paidTotalCents: 2,
       items: [
         { id: highId, ingredientId: ingredient.id, enteredQuantity: 1, enteredUnit: 'g', subtotalCents: 1 },
         { id: lowId, ingredientId: ingredient.id, enteredQuantity: 1, enteredUnit: 'g', subtotalCents: 1 },
@@ -259,7 +306,6 @@ describe('IndexedDB repository integration', () => {
     await expect(savePurchase({
       store: '碰撞商店',
       occurredAt: at(2),
-      paidTotalCents: 100,
       items: [
         { id: lowId, ingredientId: ingredient.id, enteredQuantity: 1, enteredUnit: 'g', subtotalCents: 100 },
       ],
@@ -300,7 +346,6 @@ describe('IndexedDB repository integration', () => {
     const purchase = await savePurchase({
       store: '商店',
       occurredAt: at(6),
-      paidTotalCents: 100,
       items: [{ ingredientId: ingredient.id, enteredQuantity: 100, enteredUnit: 'g', subtotalCents: 100 }],
     })
     const linked = (await loadSnapshot()).transactions.find((item) => item.purchaseId === purchase.id)
@@ -346,7 +391,6 @@ describe('IndexedDB repository integration', () => {
     await savePurchase({
       store: '測試商店',
       occurredAt: at(1),
-      paidTotalCents: 100,
       items: [{ ingredientId: ingredient.id, enteredQuantity: 10, enteredUnit: 'g', subtotalCents: 100 }],
     })
 

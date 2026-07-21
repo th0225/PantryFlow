@@ -21,9 +21,9 @@ import {
 } from '../components/Common'
 import { useFeedback } from '../components/Feedback'
 import {
-  allocatePurchaseCosts,
   dimensionForInputUnit,
   normalizeIngredientName,
+  sumPurchaseItemSubtotals,
   unitsForDimension,
 } from '../domain/core'
 import type { Ingredient, InputUnit, Purchase } from '../domain/types'
@@ -61,7 +61,6 @@ interface ItemDraft {
 interface PurchaseDraft {
   store: string
   occurredOn: string
-  paidTotal: string
   note: string
   items: ItemDraft[]
 }
@@ -176,7 +175,7 @@ export default function PurchasesPage() {
       <PageHeader
         eyebrow="PURCHASES"
         title="食材採買"
-        description="一張採買單同時建立食材支出與獨立庫存批次，折扣差額也會精確分攤。"
+        description="一張採買單同時建立食材支出與獨立庫存批次，實付總額會由所有品項小計自動加總。"
         action="新增採買"
         actionIcon={ShoppingBagOpen}
         onAction={requestNew}
@@ -264,7 +263,6 @@ function PurchaseEditor({
   const [draft, setDraft] = useState<PurchaseDraft>(() => ({
     store: purchase?.store ?? '',
     occurredOn: purchase ? toDateInput(purchase.occurredAt) : nowDateInput(),
-    paidTotal: purchase ? moneyInputValue(purchase.paidTotalCents) : '',
     note: purchase?.note ?? '',
     items: purchaseItems.length
       ? purchaseItems.map((item) => ({
@@ -282,15 +280,19 @@ function PurchaseEditor({
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState(false)
 
-  const allocationPreview = useMemo(() => {
+  const paidTotalCents = useMemo(() => {
     try {
-      const paidTotal = parseMoneyToCents(draft.paidTotal)
-      const rows = draft.items.map((item) => ({ id: item.id, subtotalCents: parseMoneyToCents(item.subtotal) }))
-      return new Map(allocatePurchaseCosts(paidTotal, rows).map((item) => [item.id, item.allocatedCostCents]))
+      return sumPurchaseItemSubtotals(draft.items.map((item) => ({
+        subtotalCents: parseMoneyToCents(item.subtotal.trim() || '0'),
+      })))
     } catch {
-      return new Map<string, number>()
+      return null
     }
-  }, [draft.items, draft.paidTotal])
+  }, [draft.items])
+
+  const paidTotalHint = purchase && paidTotalCents !== null && purchase.paidTotalCents !== paidTotalCents
+    ? `原紀錄為 ${formatMoney(purchase.paidTotalCents)}；依新規則儲存後會更新為品項小計總和。`
+    : '由所有品項小計自動加總，無需另外輸入；如有折扣，請直接填入各品項的折後小計。'
 
   const clearFieldErrors = (...keys: string[]) => {
     setErrors((current) => {
@@ -347,10 +349,9 @@ function PurchaseEditor({
     const next: Record<string, string> = {}
     if (!draft.store.trim()) next.store = '請輸入商店名稱'
     try { dateInputToIso(draft.occurredOn) } catch (caught) { next.occurredOn = caught instanceof Error ? caught.message : '日期無效' }
-    let paidTotal = 0
-    try { paidTotal = parseMoneyToCents(draft.paidTotal) } catch (caught) { next.paidTotal = caught instanceof Error ? caught.message : '金額無效' }
     if (draft.items.length === 0) next.items = '至少需要一個品項'
     let positiveSubtotal = false
+    const parsedSubtotals: { subtotalCents: number }[] = []
     const dimensionsByName = new Map<string, ReturnType<typeof dimensionForInputUnit>>()
     draft.items.forEach((item, index) => {
       if (!item.ingredientName.trim()) next[`item-${item.key}-ingredient`] = '請輸入食材名稱'
@@ -374,6 +375,7 @@ function PurchaseEditor({
       if (!Number.isFinite(quantity) || quantity <= 0) next[`item-${item.key}-quantity`] = '數量必須大於 0'
       try {
         const subtotal = parseMoneyToCents(item.subtotal)
+        parsedSubtotals.push({ subtotalCents: subtotal })
         if (subtotal > 0) positiveSubtotal = true
       } catch (caught) {
         next[`item-${item.key}-subtotal`] = caught instanceof Error ? caught.message : '小計無效'
@@ -382,14 +384,19 @@ function PurchaseEditor({
       if (!item.key) next[`item-${index}`] = '品項無效'
     })
     if (!positiveSubtotal) next.items = '至少一個品項小計必須大於 0'
-    if (!Number.isSafeInteger(paidTotal) || paidTotal < 0) next.paidTotal = '實付總額無效'
+    if (parsedSubtotals.length === draft.items.length) {
+      try {
+        sumPurchaseItemSubtotals(parsedSubtotals)
+      } catch (caught) {
+        next.items = caught instanceof Error ? '品項小計合計過大，請輸入較小的金額' : '品項小計合計無效'
+      }
+    }
     setErrors(next)
     const firstError = Object.keys(next).find((key) => key !== 'form')
     if (firstError) {
       const staticIds: Record<string, string> = {
         store: `${formId}-store`,
         occurredOn: `${formId}-date`,
-        paidTotal: `${formId}-total`,
       }
       const targetId = staticIds[firstError] ?? (
         firstError === 'items'
@@ -412,7 +419,6 @@ function PurchaseEditor({
         id: purchase?.id,
         store: draft.store,
         occurredAt: dateInputToIso(draft.occurredOn),
-        paidTotalCents: parseMoneyToCents(draft.paidTotal),
         note: draft.note,
         items: draft.items.map((item) => ({
           id: item.id,
@@ -438,7 +444,7 @@ function PurchaseEditor({
       open={open}
       onClose={onClose}
       title={purchase ? '編輯採買單' : '新增採買單'}
-      description="每個品項會建立獨立庫存批次；實付總額會依原始小計比例分攤。"
+      description="每個品項會建立獨立庫存批次；實付總額會由品項小計即時加總。"
       size="xl"
       closeOnBackdrop={!saving}
       dismissible={!saving}
@@ -460,9 +466,20 @@ function PurchaseEditor({
           <Field label="採買日期" htmlFor={`${formId}-date`} required error={errors.occurredOn}>
             <input id={`${formId}-date`} type="date" className={inputClass} value={draft.occurredOn} onChange={(event) => updateDraftField('occurredOn', event.target.value)} required aria-invalid={Boolean(errors.occurredOn)} aria-describedby={errors.occurredOn ? `${formId}-date-error` : undefined} />
           </Field>
-          <Field label="實付總額（NT$）" htmlFor={`${formId}-total`} required error={errors.paidTotal} hint="可低於或高於品項原始小計總和，系統會精確分攤差額。">
-            <input id={`${formId}-total`} type="number" inputMode="numeric" min="0" step="1" className={inputClass} value={draft.paidTotal} onChange={(event) => updateDraftField('paidTotal', event.target.value)} required aria-invalid={Boolean(errors.paidTotal)} aria-describedby={errors.paidTotal ? `${formId}-total-error` : undefined} />
-          </Field>
+          <div className="sm:col-span-2">
+            <Field label="實付總額（自動加總）" htmlFor={`${formId}-total`} hint={paidTotalHint}>
+              <output
+                id={`${formId}-total`}
+                aria-live="polite"
+                aria-atomic="true"
+                aria-describedby={`${formId}-total-hint`}
+                className={`flex min-h-12 w-full items-center justify-between gap-3 rounded-xl border px-3.5 shadow-sm ${paidTotalCents === null ? 'border-red-200 bg-red-50 text-tomato-700 dark:border-red-900/60 dark:bg-red-950/40 dark:text-red-200' : 'border-forest-100 bg-forest-50 text-forest-800 dark:border-[#315b4b] dark:bg-[#1a382d] dark:text-[#b9e5d2]'}`}
+              >
+                <span className="text-xs font-semibold">品項小計合計</span>
+                <strong className="font-mono text-lg tabular-nums">{paidTotalCents === null ? '請修正品項小計' : formatMoney(paidTotalCents)}</strong>
+              </output>
+            </Field>
+          </div>
         </div>
 
         <fieldset aria-describedby={errors.items ? `${formId}-items-error` : undefined}>
@@ -471,7 +488,7 @@ function PurchaseEditor({
             <h3 className="text-base font-bold">採買品項 <span className="text-tomato-700" aria-hidden="true">*</span><span className="sr-only">（必填）</span></h3>
             <button type="button" className="secondary-button" onClick={() => { setDraft((current) => ({ ...current, items: [...current.items, newItem()] })); clearFieldErrors('items', 'form') }}><Plus size={17} />新增品項</button>
           </div>
-          <p className="mt-1 text-xs leading-5 text-stone-500">直接輸入食材名稱；若名稱不存在，會在儲存採買單時自動建立。</p>
+          <p className="mt-1 text-xs leading-5 text-stone-500">直接輸入食材名稱；若名稱不存在，會在儲存採買單時自動建立。實付總額會隨品項小計即時更新。</p>
           {errors.items && <p id={`${formId}-items-error`} role="alert" className="mt-2 text-xs font-semibold text-tomato-700">{errors.items}</p>}
           <datalist id={`${formId}-ingredient-options`}>
             {ingredients.map((ingredient) => <option key={ingredient.id} value={ingredient.name} />)}
@@ -499,7 +516,7 @@ function PurchaseEditor({
                     <Field label="單位" htmlFor={`${formId}-${item.key}-unit`} required error={errors[`item-${item.key}-unit`]}>
                       <select id={`${formId}-${item.key}-unit`} className={selectClass} value={item.unit} onChange={(event) => updateItem(item.key, { unit: event.target.value as InputUnit })} required aria-invalid={Boolean(errors[`item-${item.key}-unit`])} aria-describedby={errors[`item-${item.key}-unit`] ? `${formId}-${item.key}-unit-error` : undefined}>{unitOptions.map((unit) => <option key={unit} value={unit}>{inputUnitLabels[unit]}</option>)}</select>
                     </Field>
-                    <Field label="原始小計（NT$）" htmlFor={`${formId}-${item.key}-subtotal`} required error={errors[`item-${item.key}-subtotal`]} hint={allocationPreview.has(item.id) ? `分攤後 ${formatMoney(allocationPreview.get(item.id) ?? 0)}` : undefined}>
+                    <Field label="品項小計（NT$）" htmlFor={`${formId}-${item.key}-subtotal`} required error={errors[`item-${item.key}-subtotal`]}>
                       <input id={`${formId}-${item.key}-subtotal`} type="number" inputMode="numeric" min="0" step="1" className={inputClass} value={item.subtotal} onChange={(event) => updateItem(item.key, { subtotal: event.target.value })} required aria-invalid={Boolean(errors[`item-${item.key}-subtotal`])} aria-describedby={errors[`item-${item.key}-subtotal`] ? `${formId}-${item.key}-subtotal-error` : undefined} />
                     </Field>
                     <Field label="有效日期" htmlFor={`${formId}-${item.key}-expiry`} error={errors[`item-${item.key}-expiry`]}>

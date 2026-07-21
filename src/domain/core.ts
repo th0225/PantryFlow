@@ -90,6 +90,17 @@ export function convertToBase(
   return converted
 }
 
+export function sumPurchaseItemSubtotals(
+  items: readonly Pick<PurchaseCostAllocationInput, 'subtotalCents'>[],
+): MoneyCents {
+  return items.reduce((total, item, index) => {
+    assertNonNegativeSafeInteger(item.subtotalCents, `subtotalCents for item ${index + 1}`)
+    const nextTotal = total + item.subtotalCents
+    assertNonNegativeSafeInteger(nextTotal, 'purchase item subtotal total')
+    return nextTotal
+  }, 0)
+}
+
 export function allocatePurchaseCosts(
   paidTotalCents: MoneyCents,
   items: readonly PurchaseCostAllocationInput[],

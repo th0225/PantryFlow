@@ -6,6 +6,7 @@ import {
   DomainValidationError,
   normalizeIngredientName,
   recalculateInventory,
+  sumPurchaseItemSubtotals,
 } from '../domain/core'
 import type {
   BaseUnit,
@@ -76,7 +77,6 @@ export type PurchaseItemInput = PurchaseItemInputBase & (
 export interface PurchaseInput {
   store: string
   occurredAt: string
-  paidTotalCents: number
   note?: string
   items: readonly PurchaseItemInput[]
 }
@@ -383,14 +383,14 @@ export async function deleteIngredient(id: string): Promise<void> {
 
 export async function createPurchase(input: PurchaseInput): Promise<Purchase> {
   return mutateAndRecalculate(async () => {
-    assertPurchaseInput(input)
+    const paidTotalCents = assertPurchaseInput(input)
     const timestamp = now()
     const purchaseId = newId()
     const transactionId = newId()
     const category = await resolveGroceriesCategory()
     const purchaseItems = await preparePurchaseItems(
       purchaseId,
-      input.paidTotalCents,
+      paidTotalCents,
       input.items,
       timestamp,
     )
@@ -398,7 +398,7 @@ export async function createPurchase(input: PurchaseInput): Promise<Purchase> {
       id: purchaseId,
       store: input.store.trim(),
       occurredAt: input.occurredAt,
-      paidTotalCents: input.paidTotalCents,
+      paidTotalCents,
       note: cleanOptionalText(input.note),
       transactionId,
       createdAt: timestamp,
@@ -408,7 +408,7 @@ export async function createPurchase(input: PurchaseInput): Promise<Purchase> {
       id: transactionId,
       type: 'expense',
       occurredAt: input.occurredAt,
-      amountCents: input.paidTotalCents,
+      amountCents: paidTotalCents,
       categoryId: category.id,
       note: purchaseTransactionNote(input.store, input.note),
       purchaseId,
@@ -429,7 +429,7 @@ export async function savePurchase(input: SavePurchaseInput): Promise<Purchase> 
 
 export async function updatePurchase(id: string, input: PurchaseInput): Promise<Purchase> {
   return mutateAndRecalculate(async () => {
-    assertPurchaseInput(input)
+    const paidTotalCents = assertPurchaseInput(input)
     const current = await requireRecord(db.purchases.get(id), 'Purchase', id)
     const transaction = await requireRecord(
       db.transactions.get(current.transactionId),
@@ -442,7 +442,7 @@ export async function updatePurchase(id: string, input: PurchaseInput): Promise<
     const timestamp = now()
     const purchaseItems = await preparePurchaseItems(
       id,
-      input.paidTotalCents,
+      paidTotalCents,
       input.items,
       timestamp,
       existingItems,
@@ -451,7 +451,7 @@ export async function updatePurchase(id: string, input: PurchaseInput): Promise<
       ...current,
       store: input.store.trim(),
       occurredAt: input.occurredAt,
-      paidTotalCents: input.paidTotalCents,
+      paidTotalCents,
       note: cleanOptionalText(input.note),
       updatedAt: timestamp,
     }
@@ -459,7 +459,7 @@ export async function updatePurchase(id: string, input: PurchaseInput): Promise<
       ...transaction,
       type: 'expense',
       occurredAt: input.occurredAt,
-      amountCents: input.paidTotalCents,
+      amountCents: paidTotalCents,
       note: purchaseTransactionNote(input.store, input.note),
       purchaseId: id,
       updatedAt: timestamp,
@@ -1174,13 +1174,15 @@ async function ingredientIsReferenced(id: string): Promise<boolean> {
   return purchases + adjustments + meals > 0
 }
 
-function assertPurchaseInput(input: PurchaseInput): void {
+function assertPurchaseInput(input: PurchaseInput): number {
   assertNonEmpty(input.store, 'Store')
   assertDateTime(input.occurredAt, 'occurredAt')
-  if (!Number.isSafeInteger(input.paidTotalCents) || input.paidTotalCents < 0) {
-    throw new DomainValidationError('paidTotalCents must be a non-negative safe integer')
-  }
   if (input.items.length === 0) throw new DomainValidationError('A purchase requires at least one item')
+  const paidTotalCents = sumPurchaseItemSubtotals(input.items)
+  if (paidTotalCents <= 0) {
+    throw new DomainValidationError('At least one purchase item subtotal must be greater than zero')
+  }
+  return paidTotalCents
 }
 
 function assertMealInput(input: MealInput): void {

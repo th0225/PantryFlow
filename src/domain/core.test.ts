@@ -7,6 +7,7 @@ import {
   calculateMealAvailability,
   convertToBase,
   recalculateInventory,
+  sumPurchaseItemSubtotals,
   unitsForDimension,
 } from './core'
 import type {
@@ -177,6 +178,22 @@ describe('unit conversion', () => {
 })
 
 describe('purchase cost allocation', () => {
+  it('sums purchase item subtotals without losing integer-cent precision', () => {
+    expect(sumPurchaseItemSubtotals([
+      { subtotalCents: 12_300 },
+      { subtotalCents: 4_500 },
+      { subtotalCents: 0 },
+    ])).toBe(16_800)
+  })
+
+  it('rejects invalid subtotals and a total that exceeds the safe integer range', () => {
+    expect(() => sumPurchaseItemSubtotals([{ subtotalCents: -1 }])).toThrow(DomainValidationError)
+    expect(() => sumPurchaseItemSubtotals([
+      { subtotalCents: Number.MAX_SAFE_INTEGER },
+      { subtotalCents: 1 },
+    ])).toThrow(DomainValidationError)
+  })
+
   it('allocates a discount proportionally and preserves the paid total', () => {
     const result = allocatePurchaseCosts(1_200, [
       { id: 'vegetables', subtotalCents: 1_000 },
